@@ -109,7 +109,7 @@ class PPO:
         self.policy = ActorCritic(state_dim, action_dim, n_latent_var).to(device)
 
         # load model
-        if True:
+        if False:
             self.policy.load_state_dict(torch.load('PPO_gfootball.pth'))
             self.policy.eval()
 
@@ -163,8 +163,7 @@ class PPO:
                 surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values,
                                                                      split_rewards) - 0.01 * dist_entropy  # loss加个负号，梯度上升就成了梯度下降
-                #loss = loss.double()
-              #  print(loss)
+
                 # take gradient step
                 self.optimizer.zero_grad()
                 loss.mean().backward()
@@ -229,7 +228,7 @@ def main():
             # Saving reward and is_terminal:
             memory.rewards.append(reward)
             memory.is_terminals.append(done)
-            # ppo.update(memory)
+
             # update if its time
             if timestep % update_timestep == 0:
                 ppo_policy.update(memory,batch_size)

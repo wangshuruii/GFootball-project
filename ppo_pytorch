@@ -170,23 +170,6 @@ class PPO:
                 loss.mean().backward()
                 self.optimizer.step()
 
-def flt(step,action):
-    if step==0:
-        action=13
-    if step>=0 and step<10:
-        action=1
-    if step>=10 and step<50:
-        action=7
-    if step>=50 and step<70:
-        action=5
-    if step>=70 and step<95:
-        action=4
-    if step==94:
-        action=15
-    if step==95:
-        action=12
-    return action
-
 def main():
     ############## Hyperparameters ##############
     env_name = "gfootball"

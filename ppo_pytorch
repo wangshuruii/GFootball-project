@@ -89,14 +89,6 @@ class ActorCritic(nn.Module):
         return action_logprobs, torch.squeeze(state_value), dist_entropy
 
 
-class CNNModel(nn.Module):
-    def __init__(self):
-        return
-
-
-class RNNModel(nn.Module):
-    def __init__(self):
-        return
 
 class PPO:
     def __init__(self, state_dim, action_dim, n_latent_var, lr, betas, gamma, K_epochs, eps_clip):

@@ -88,14 +88,6 @@ class ActorCritic(nn.Module):
         return action_logprobs, torch.squeeze(state_value), dist_entropy
 
 
-class CNNModel(nn.Module):
-    def __init__(self):
-        return
-
-
-class RNNModel(nn.Module):
-    def __init__(self):
-        return
 
 class PPO:
     def __init__(self, state_dim, action_dim, n_latent_var, lr, betas, gamma, K_epochs, eps_clip):
@@ -189,7 +181,7 @@ def main():
     max_timesteps = 128  # max timesteps in one episode
     n_latent_var = 64  # number of variables in hidden layer
     update_timestep = 2000  # update policy every n timesteps
-    lr = 0.005
+    lr = 0.0005
     betas = (0.9, 0.999)
     gamma = 0.99  # discount factor
     K_epochs = 4  # update policy for K epochs

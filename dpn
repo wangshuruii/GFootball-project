@@ -1,0 +1,219 @@
+import torch
+import numpy as np
+import gfootball.env as football_env
+import time
+import torch.nn as nn
+import math
+import random
+import torch.nn.functional as F
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+class Memory():
+    def __init__(self, size):
+        self.max_size = size
+        self.memory = []
+        self.position = 0
+
+
+    def push(self,state , action, reward, n_state):
+        if len(self.memory) < self.max_size:
+            self.memory.append(None)
+        self.memory[self.position] = (state,action, reward, n_state)
+        self.position = (self.position+1) % self.max_size
+
+    def sample(self, batch_size):
+        if 200 > len(self.memory):
+            return None
+        else:
+            return random.sample(self.memory, batch_size)
+
+class net(nn.Module):
+    def __init__(self,state_dim,action_dim, n_latent_var):
+        super(net, self).__init__()
+        self.ff = nn.Sequential(
+            nn.Linear(state_dim, n_latent_var),
+            nn.Tanh(),
+            nn.Linear(n_latent_var, n_latent_var),
+            nn.Tanh(),
+            nn.Linear(n_latent_var,action_dim)
+        )
+
+    def forward(self, state):
+        if type(state) is np.ndarray:
+            state = torch.from_numpy(state).float().to(device)
+        #print(state)
+        # print(state)
+        logits = self.ff(state)
+        return logits
+
+class dqn(nn.Module):
+    def __init__(self, state_dim, action_dim, n_latent_layer,gamma,lr):
+        super(dqn, self).__init__()
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.policy_net = net(self.state_dim, self.action_dim, n_latent_layer)
+
+        # for m in self.policy_net.modules():
+        #     if isinstance(m, (nn.Conv2d, nn.Linear)):
+        #         nn.init.xavier_uniform_(m.weight)
+
+        self.target_net = net(self.state_dim, self.action_dim, n_latent_layer)
+        self.gamma = gamma
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+        self.optimzer = torch.optim.RMSprop(self.policy_net.parameters(),lr=lr)
+
+        self.EPS_START = 0.9
+        self.EPS_END = 0.05
+        self.EPS_DECAY = 200
+
+    # epison-greedy, with exponential decay for epison
+    def act(self, state, step):
+        epison = self.EPS_END + (self.EPS_START - self.EPS_END) \
+            * math.exp(-1. * step / self.EPS_DECAY)
+        sample = random.random()
+        if sample >= epison:
+            with torch.no_grad():
+                logits = self.policy_net(state)
+
+                return logits.max(-1)[1].view(1, 1)
+
+        else:
+           # return torch.tensor([1])
+            return torch.tensor(random.randint(0,self.action_dim-1))
+
+
+    def learn(self,memory, batch_size):
+        batch = memory.sample(batch_size)
+        if batch is None:
+            return
+
+        state_batch = torch.Tensor([s[0] for s in batch])
+        action_batch = torch.tensor([s[1] for s in batch])
+        reward_batch = torch.Tensor([s[2] for s in batch])
+        n_state_batch = [ s[3] for s in batch ]
+
+        non_final_mask = torch.tensor(tuple(map(lambda x: x is not None, n_state_batch)), dtype=torch.bool)
+        non_final_next_state = torch.Tensor( [x for x in n_state_batch if x is not None] )
+
+        state_action_value = self.policy_net(state_batch).gather(1, action_batch.unsqueeze(-1))
+       # print(state_action_value.size())
+        n_state_action_value = torch.zeros(batch_size)
+        n_state_action_value[non_final_mask] = self.target_net(non_final_next_state).max(1)[0].detach()
+
+        #print(reward_batch)
+        expect_state_action_value = reward_batch + self.gamma* n_state_action_value
+        #state_action_value = state_action_value.squeeze(-1)
+        #expect_state_action_value = expect_state_action_value.unsqueeze(-1)
+       # print(state_action_value.size())
+        loss = F.smooth_l1_loss(state_action_value, expect_state_action_value.unsqueeze(-1))
+      #  print(loss)
+        self.optimzer.zero_grad()
+        loss.backward()
+        for param in self.policy_net.parameters():
+            param.grad.clamp(-1,1)
+        self.optimzer.step()
+
+def train():
+    ############## Hyperparameters ##############
+    env_name = "gfootball"
+    # creating environment
+    env = football_env.create_environment(
+      env_name='academy_3_vs_1_with_keeper',
+      stacked=False,
+      representation='simple115v2',
+      rewards = 'scoring',
+      write_goal_dumps=False,
+      write_full_episode_dumps=False,
+      dump_frequency = 0)
+    state_dim = env.observation_space.shape[0]
+    action_dim = 19
+    render = False
+    solved_reward = 0.8  # stop training if avg_reward > solved_reward
+    log_interval = 50  # print and save reward in the interval
+    max_episodes = 50000  # max training episodes
+    max_timesteps = 128  # max timesteps in one episode
+    n_latent_var = 64  # number of variables in hidden layer
+
+    lr = 5e-3
+
+    gamma = 0.9  # discount factor
+
+    random_seed = None
+
+    batch_size = 64
+    collect_per_step = 100      #the number of frames the collector would collect before the network update
+    update_per_step = 10      #the number of times the policy network would be updated after frames be collected.
+    steps_per_epoch = 1000       #一个epoch有多少steps
+    update_target_nerwork = 320
+    #############################################
+
+    if random_seed:
+        torch.manual_seed(random_seed)
+        env.seed(random_seed)
+
+
+    memory = Memory(20000)
+    timestep = 0
+    dqn_policy = dqn(state_dim,action_dim,n_latent_var,gamma,lr)
+    reward_arr = []
+    round_reward = 0
+    avg_length = 0
+    running_reward = 0
+    state = env.reset()
+    for i_episode in range(1, max_episodes+1):
+        steps_episode = 0
+        while(steps_episode < steps_per_epoch):
+
+            for t in range(max_timesteps):
+
+                action = dqn_policy.act(state, timestep)
+
+                n_state, reward, done, _ = env.step(action.item())
+
+                if done:
+                    n_state = None
+
+
+                memory.push(state,action,reward, n_state)
+
+                if (timestep+1) % collect_per_step == 0:
+                    for _ in range(update_per_step):
+                        dqn_policy.learn(memory, batch_size)
+
+                round_reward += reward
+                state = n_state
+                timestep += 1
+                steps_episode += 1
+
+                if (timestep+1) % update_target_nerwork == 0:
+                    dqn_policy.target_net.load_state_dict(dqn_policy.policy_net.state_dict())
+
+
+                if (timestep + 1) % log_interval == 0:
+                    np.save("reward", round_reward)
+
+                if render:
+                    env.render()
+
+                if reward!=-1:running_reward += reward
+
+                if done:
+                    state = env.reset()
+
+                    reward_arr.append(round_reward)
+                    round_reward = 0
+                    break
+
+        #print(i_episode)
+        avg_length += t
+        if i_episode % log_interval == 0:
+            avg_length = int(avg_length / log_interval)
+            running_reward = running_reward / log_interval
+            print('Episode {} \t avg length: {} \t reward: {}'.format(i_episode, avg_length, running_reward))
+            running_reward = 0
+            avg_length = 0
+
+if __name__ == "__main__":
+    train()

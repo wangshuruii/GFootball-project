@@ -1,2 +1,12 @@
 # GFootball-project
 2021年算分小班project
+
+ppo_pytorch 为ppo算法pytorch版本的实现，也是最终调参完成后训练模型的代码
+ppo_pytorch_model 为ppo算法加载模型的代码
+ppo_tensorflow 为ppo算法tensorflow版本的实现，是早期尝试的一个失败代码，但为之后的调整提供了一些借鉴
+improve_state 为改进ppo算法reward中的state部分
+improve_action 为改进ppo算法reward中的action部分
+dpn 为dqn算法实现，是改进部分的一个尝试
+PPO_gfootball.1.pth 是最终获得的模型
+
+注：由于大部分代码均有一人上传，个人commits不代表代码工作量，具体代码工作量详见项目报告

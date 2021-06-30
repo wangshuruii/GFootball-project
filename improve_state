@@ -108,7 +108,7 @@ class PPO:
         self.policy = ActorCritic(state_dim, action_dim, n_latent_var).to(device)
 
         # load model
-        if True:
+        if False:
             self.policy.load_state_dict(torch.load('PPO95_gfootball.pth'))
             self.policy.eval()
 
@@ -191,7 +191,7 @@ def main():
     max_timesteps = 128  # max timesteps in one episode
     n_latent_var = 64  # number of variables in hidden layer
     update_timestep = 2000  # update policy every n timesteps
-    lr = 0.005
+    lr = 0.0005
     betas = (0.9, 0.999)
     gamma = 0.99  # discount factor
     K_epochs = 4  # update policy for K epochs

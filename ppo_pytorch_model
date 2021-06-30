@@ -1,0 +1,271 @@
+import torch
+import numpy as np
+import gfootball.env as football_env
+import time
+import torch.nn as nn
+from torch.distributions import Categorical
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+#PPO replay buffer，return all
+class Memory:
+    def __init__(self):
+        self.actions = []
+        self.states = []
+        self.logprobs = []
+        self.rewards = []
+        self.is_terminals = []
+
+    def reset_memory(self):
+        del self.actions[:]
+        del self.states[:]
+        del self.logprobs[:]
+        del self.rewards[:]
+        del self.is_terminals[:]
+        self.actions = []
+        self.states = []
+        self.logprobs = []
+        self.rewards = []
+        self.is_terminals = []
+
+
+    def split(self,batch_size):
+        split_res = []
+        length = len(self.actions)
+        if batch_size is None:
+            split_res.append((0, length-1))
+            return split_res
+        for idx in range(0, length, batch_size):
+            if idx + batch_size < length:
+                split_res.append((idx, idx + batch_size))
+            else:
+                split_res.append((length-idx-1, length-1))
+        return split_res
+
+class ActorCritic(nn.Module):
+    def __init__(self, state_dim, action_dim, n_latent_var):
+        super(ActorCritic, self).__init__()
+
+        # actor
+        self.action_layer = nn.Sequential(
+            nn.Linear(state_dim, n_latent_var),
+            nn.Tanh(),
+            nn.Linear(n_latent_var, action_dim),
+            nn.Softmax(dim=-1)
+        )
+
+        # critic
+        self.value_layer = nn.Sequential(
+            nn.Linear(state_dim, n_latent_var),
+            nn.Tanh(),
+            nn.Linear(n_latent_var,1)
+        )
+
+    def forward(self):
+        raise NotImplementedError
+
+    def act(self, state, memory):  # 对actor结果进行采样得到需要执行的动作
+        state = torch.from_numpy(state).float().to(device)
+        action_probs = self.action_layer(state)
+        dist = Categorical(action_probs)  # 按照action_probs中的概率对其进行采样，采样出一个值，其是action_probs中对应的下标
+        action = dist.sample()
+
+        memory.states.append(state)
+        memory.actions.append(action)
+        memory.logprobs.append(dist.log_prob(action))  # 计算其对概率对数
+
+        return action.item()  # 返回一对action 的 sample
+
+    def evaluate(self, state, action):  # 计算输出动作概率，状态价值，交叉熵等信息，评估器
+        action_probs = self.action_layer(state)
+        dist = Categorical(action_probs)
+
+        action_logprobs = dist.log_prob(action)
+        dist_entropy = dist.entropy()  # 计算一下action_probs的交叉熵  p_log_p = self.logits * self.probs
+
+        state_value = self.value_layer(state)
+
+        return action_logprobs, torch.squeeze(state_value), dist_entropy
+
+
+class CNNModel(nn.Module):
+    def __init__(self):
+        return
+
+
+class RNNModel(nn.Module):
+    def __init__(self):
+        return
+
+class PPO:
+    def __init__(self, state_dim, action_dim, n_latent_var, lr, betas, gamma, K_epochs, eps_clip):
+        self.lr = lr
+        self.betas = betas
+        self.gamma = gamma
+        self.eps_clip = eps_clip
+        self.K_epochs = K_epochs
+
+        self.policy = ActorCritic(state_dim, action_dim, n_latent_var).to(device)
+
+        # load model
+        if True:
+            self.policy.load_state_dict(torch.load('PPO_gfootball.1.pth'))
+            self.policy.eval()
+
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, betas=betas)
+
+
+        self.MseLoss = nn.MSELoss()
+
+    def ramdom_sample(self):
+        index = np.random
+
+    def update(self, memory, batch_size = None):
+        # Monte Carlo estimate of state rewards:
+        rewards = []
+        discounted_reward = 0
+        for reward, is_terminal in zip(reversed(memory.rewards), reversed(memory.is_terminals)):
+            if is_terminal:
+                discounted_reward = 0
+            discounted_reward = reward + (self.gamma * discounted_reward)
+            rewards.insert(0, discounted_reward)
+
+
+        # Normalizing the rewards:
+        rewards = torch.tensor(rewards).float().to(device)
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
+
+        # convert list to tensor
+        old_states = torch.stack(memory.states).to(device).detach()
+        old_actions = torch.stack(memory.actions).to(device).detach()
+        old_logprobs = torch.stack(memory.logprobs).to(device).detach()
+
+        split_res = memory.split(batch_size)
+
+        # Optimize policy for K epochs:
+        for _ in range(self.K_epochs):
+            for split_idx in split_res:
+                split_old_states = old_states[split_idx[0]:split_idx[1]]
+                split_old_actions = old_actions[split_idx[0]:split_idx[1]]
+                split_old_logprobs = old_logprobs[split_idx[0]:split_idx[1]]
+                split_rewards = rewards[split_idx[0]:split_idx[1]]
+
+                # Evaluating old actions and values :
+                logprobs, state_values, dist_entropy = self.policy.evaluate(split_old_states, split_old_actions)
+
+                # Finding the ratio (pi_theta / pi_theta__old):
+                ratios = torch.exp(logprobs - split_old_logprobs.detach())
+
+                # Finding Surrogate Loss:
+                advantages = split_rewards - state_values.detach()
+                surr1 = ratios * advantages
+                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+                loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values,
+                                                                     split_rewards) - 0.01 * dist_entropy  # loss加个负号，梯度上升就成了梯度下降
+                #loss = loss.double()
+              #  print(loss)
+                # take gradient step
+                self.optimizer.zero_grad()
+                loss.mean().backward()
+                self.optimizer.step()
+
+
+def main():
+    ############## Hyperparameters ##############
+    env_name = "gfootball"
+    # creating environment
+    env = football_env.create_environment(
+      env_name='academy_3_vs_1_with_keeper',
+      stacked=False,
+      representation='simple115v2',
+      rewards = 'scoring',
+      write_goal_dumps=False,
+      write_full_episode_dumps=False,
+      dump_frequency = 0)
+    state_dim = env.observation_space.shape[0]
+    action_dim = 19
+    render = False
+    solved_reward = 0.99  # stop training if avg_reward > solved_reward
+    log_interval = 100  # print avg reward in the interval
+    max_episodes = 50000  # max training episodes
+    max_timesteps = 128  # max timesteps in one episode
+    n_latent_var = 64  # number of variables in hidden layer
+    update_timestep = 2000  # update policy every n timesteps
+    lr = 0.0005
+    betas = (0.9, 0.999)
+    gamma = 0.99  # discount factor
+    K_epochs = 4  # update policy for K epochs
+    eps_clip = 0.2  # clip parameter for PPO
+    random_seed = None
+
+    batch_size = 64
+    #############################################
+
+    if random_seed:
+        torch.manual_seed(random_seed)
+        env.seed(random_seed)
+
+    memory = Memory()
+    ppo_policy = PPO(state_dim, action_dim, n_latent_var, lr, betas, gamma, K_epochs, eps_clip)
+    print(lr, betas)
+
+    # logging variables
+    running_reward = 0
+    avg_length = 0
+    timestep = 0
+    reward_arr = []
+    # training loop
+    st = time.time()
+    for i_episode in range(1, max_episodes + 1):
+        state = env.reset()
+        tmpreward = 0
+        for t in range(max_timesteps):
+            timestep += 1
+
+		
+            # Running policy_old:
+            action = ppo_policy.policy.act(state, memory)
+            state, reward, done, _ = env.step(action)
+            tmpreward += reward
+
+            # Saving reward and is_terminal:
+            memory.rewards.append(reward)
+            memory.is_terminals.append(done)
+            # ppo.update(memory)
+            # update if its time
+            if timestep % update_timestep == 0:
+                ppo_policy.update(memory,batch_size)
+                memory.reset_memory()
+                timestep = 0
+
+            if reward!=-1:running_reward += reward
+            if render:
+                env.render()
+            if done:
+                break
+
+        avg_length += t
+        #print(running_reward)
+
+        # stop training if avg_reward > solved_reward
+        if running_reward > (log_interval * solved_reward):
+            print("########## Solved! ##########")
+            print("end time", time.time() - st )
+            torch.save(ppo_policy.policy.state_dict(), './PPO95_{}.pth'.format(env_name))
+            break
+
+        # logging
+        if i_episode % log_interval == 0:
+            avg_length = int(avg_length / log_interval)
+            running_reward = running_reward / log_interval
+            print('Episode {} \t avg length: {} \t reward: {}'.format(i_episode, avg_length, running_reward))
+            running_reward = 0
+            avg_length = 0
+
+        reward_arr.append(tmpreward)
+        np.save('reward', reward_arr)
+
+
+   
+if __name__ == '__main__':
+    main()
